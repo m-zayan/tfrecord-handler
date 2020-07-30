@@ -104,7 +104,6 @@ class TfRecordWriter:
 
         try:
             img = cv2.imread(path)
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             img = cv2.resize(img, self.shape, interpolation=cv2.INTER_AREA)
 
         except Exception as error:
@@ -204,7 +203,7 @@ class TfRecordWriter:
 
                     writer.write(example)
 
-    def from_directory(self, from_dir: str, query: str, image_key: str = 'image'):
+    def from_directory(self, from_dir: str, query: str = None, image_key: str = 'image'):
         pass
 
 
