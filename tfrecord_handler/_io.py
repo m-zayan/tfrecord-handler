@@ -224,6 +224,8 @@ class TfRecordWriter:
             apply func[column_name] using a copy of the dataframe, to a column
             if it's not an image_key column, otherwise, apply func inplace.
 
+            default = False
+            
         Returns
         -------
         """
@@ -260,7 +262,7 @@ class TfRecordWriter:
 
         self._check_ext()
 
-        if func is not None and inplace is True:
+        if func is not None and inplace is False:
 
             _dataframe = dataframe.copy()
 
