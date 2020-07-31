@@ -1,4 +1,5 @@
 from typing import Union, Callable, Dict
+import warnings
 
 import tqdm.notebook as tqdm
 import cv2
@@ -11,11 +12,33 @@ __all__ = ['TfRecordWriter', 'TfRecordReader']
 
 class TfRecordWriter:
 
-    def __init__(self, shape, n_records, image_ext='.jpg'):
+    def __init__(self, shape: Union[tuple, list], n_records: int,
+                 image_ext: str = '.jpg', failure_ignore: bool = False):
+
+        """
+        Parameters
+        ----------
+
+        shape: tuple
+
+        n_records: int
+
+        image_ext: str
+            default = '.jpg'
+
+        failure_ignore: bool
+            if True, then Get a warning message in case of
+            failed reading image or writing any feature of an example,
+            instead of raising ValueError,
+            ex. skip reading a corrupted image file and continue writing TFRecord,
+
+            default = False
+        """
 
         self.shape = shape
         self.n_records = n_records
         self.image_ext = image_ext
+        self.failure_ignore = failure_ignore
 
     def _check_ext(self):
 
@@ -77,28 +100,61 @@ class TfRecordWriter:
             else:
                 raise ValueError('Value of Type : ' + str(f_dtype)[8:-2] + ', is not supported')
 
-    def _serialize_example(self, row: dict, dtypes: dict, image_key: str, from_dir: str, has_ext: bool):
+    def _serialize_example(self, row: dict, dtypes: dict, image_key: str,
+                           from_dir: str, has_ext: bool, func: Dict[str, Callable]):
 
-        example = {}
+        try:
 
-        for key, value in row.items():
+            example = {}
 
-            _value = value
+            for key, value in row.items():
 
-            if key == image_key:
+                _value = value
 
-                if from_dir is not None:
-                    _value = from_dir + value
-                if not has_ext:
-                    _value += self.image_ext
+                if key == image_key:
 
-                _value = self.bytes_from_dir(_value)
+                    if from_dir is not None:
 
-            example[key] = TfRecordWriter._as_feature_type(dtypes[key], _value)
+                        _value = from_dir + value
 
-        example = tf.train.Example(features=tf.train.Features(feature=example))
+                    if not has_ext:
 
-        return example.SerializeToString()
+                        _value += self.image_ext
+
+                    if func is not None and image_key in func.keys():
+
+                        _value = self.image_from_dir(_value)
+                        _value = func[image_key](_value)
+
+                        if _value is None:
+                            raise ValueError(f'Function, func[{image_key}], returns None')
+
+                        _value = self.image_to_bytes(_value)
+
+                    else:
+
+                        _value = self.bytes_from_dir(_value)
+
+                example[key] = TfRecordWriter._as_feature_type(dtypes[key], _value)
+
+            example = tf.train.Example(features=tf.train.Features(feature=example))
+
+        except Exception as error:
+
+            if self.failure_ignore is True:
+
+                warnings.warn(f'Warning: {repr(error)}')
+
+                return None
+
+            else:
+
+                raise ValueError(f'An error has occurred, Failed writing an example:'
+                                 f'\n, {error}, to ignore failure state:\n'
+                                 f'\tset TfRecordWriter(...., failure_ignore=True)')
+        else:
+
+            return example.SerializeToString()
 
     def image_from_dir(self, path):
 
@@ -127,7 +183,9 @@ class TfRecordWriter:
 
     def from_dataframe(self, dataframe: pd.DataFrame, dtypes: Union[list, dict],
                        image_key: str = 'image', pref_fname: str = 'train',
-                       from_dir: str = None, to_dir='./', has_ext: bool = False):
+                       from_dir: str = None, to_dir='./', has_ext: bool = False,
+                       func: Dict[str, Callable] = None, inplace: bool = False):
+
         """
         Parameters
         ----------
@@ -154,11 +212,24 @@ class TfRecordWriter:
 
         has_ext: bool
             should set, has_ext = true, if dataframe images column (path info) not include the image extension
+
+        func: Dict[str, Callable]
+            Preprocessing function/s to be applied to a specific feature,
+            the function should return a modified value, if the key is an image_key, then
+            expect a function which get pixel values (np.ndarray), and
+            returns a modified value, default = None
+
+        inplace: bool
+            In case of func parameter is not None, If False,
+            apply func[column_name] using a copy of the dataframe, to a column
+            if it's not an image_key column, otherwise, apply func inplace.
+
         Returns
         -------
         """
         _dtypes = {}
         keys = list(dataframe.keys())
+        _dataframe = None
 
         k_split = (len(dataframe) + self.n_records) // self.n_records
         _path = None
@@ -176,6 +247,7 @@ class TfRecordWriter:
             _dtypes = dtypes
 
         else:
+
             ValueError('dtypes, must be type of : list or dict not ' + f'<{str(dtypes)[8:-2]}>')
 
         if from_dir is not None and from_dir[-1] != '/':
@@ -188,20 +260,47 @@ class TfRecordWriter:
 
         self._check_ext()
 
+        if func is not None and inplace is True:
+
+            _dataframe = dataframe.copy()
+
+        else:
+
+            _dataframe = dataframe
+
+        if func is not None:
+            for func_key in func.keys():
+
+                if func_key != image_key:
+
+                    if func_key in _dataframe.keys():
+
+                        _dataframe[func_key] = _dataframe[func_key].apply(func[func_key])
+
+                    else:
+
+                        raise ValueError(f'{func_key} column does not exist in dataframe, func[{func_key}]')
+
         for i in range(self.n_records):
 
             _path = f'{to_dir}/{pref_fname}_{i}.tfrec'
 
             start = i * k_split
-            end = min((i + 1) * k_split, len(dataframe))
+            end = min((i + 1) * k_split, len(_dataframe))
 
             with tf.io.TFRecordWriter(_path) as writer:
+
                 for j in tqdm.tqdm_notebook(range(start, end)):
 
-                    example = self._serialize_example(dataframe.iloc[j].to_dict(),
-                                                      _dtypes, image_key, from_dir, has_ext)
+                    example = self._serialize_example(_dataframe.iloc[j].to_dict(),
+                                                      _dtypes, image_key, from_dir, has_ext, func)
 
-                    writer.write(example)
+                    if example is not None:
+
+                        writer.write(example)
+
+                    else:
+                        continue
 
     def from_directory(self, from_dir: str, query: str = None, image_key: str = 'image'):
         pass
@@ -228,7 +327,7 @@ class TfRecordReader:
         channels: int
             default = 3
 
-        func: Dict[Callable]
+        func: Dict[str, Callable]
             Preprocessing function/s to be applied to a specific feature,
             the function should return a modified value, default = None
         """
