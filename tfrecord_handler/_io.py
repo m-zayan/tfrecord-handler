@@ -248,6 +248,10 @@ class TfRecordReader:
 
             image = tf.image.resize(image, self.shape)
 
+        else:
+
+            image = tf.cast(image, dtype=tf.float32)
+
         return image
 
     @staticmethod
