@@ -1,5 +1,7 @@
 from typing import Union, Callable, Dict
+
 import warnings
+import sys
 
 import tqdm.notebook as tqdm
 import cv2
@@ -13,7 +15,8 @@ __all__ = ['TfRecordWriter', 'TfRecordReader']
 class TfRecordWriter:
 
     def __init__(self, shape: Union[tuple, list], n_records: int,
-                 image_ext: str = '.jpg', failure_ignore: bool = False):
+                 image_ext: str = '.jpg', failure_ignore: bool = False,
+                 cache_warnings: bool = False):
 
         """
         Parameters
@@ -33,12 +36,22 @@ class TfRecordWriter:
             ex. skip reading a corrupted image file and continue writing TFRecord,
 
             default = False
+
+        cache_warnings: bool
+            if True, cache warnings messages, as dict,
+            index of the failure example as a key, and causes  (error: failure message) as value,
+
+            cache, failure_examples attribute
+
+            default = False
         """
 
         self.shape = shape
         self.n_records = n_records
         self.image_ext = image_ext
         self.failure_ignore = failure_ignore
+        self.cache_warnings = cache_warnings
+        self.failure_examples = None
 
     def _check_ext(self):
 
@@ -100,7 +113,7 @@ class TfRecordWriter:
             else:
                 raise ValueError('Value of Type : ' + str(f_dtype)[8:-2] + ', is not supported')
 
-    def _serialize_example(self, row: dict, dtypes: dict, image_key: str,
+    def _serialize_example(self, loc: int, row: dict, dtypes: dict, image_key: str,
                            from_dir: str, has_ext: bool, func: Dict[str, Callable]):
 
         try:
@@ -143,7 +156,13 @@ class TfRecordWriter:
 
             if self.failure_ignore is True:
 
-                warnings.warn(f'Warning: {repr(error)}')
+                if self.cache_warnings is True:
+
+                    self.failure_examples[loc] = repr(error)
+
+                else:
+
+                    warnings.warn(f'Warning: {repr(error)}')
 
                 return None
 
@@ -225,7 +244,7 @@ class TfRecordWriter:
             if it's not an image_key column, otherwise, apply func inplace.
 
             default = False
-            
+
         Returns
         -------
         """
@@ -235,6 +254,8 @@ class TfRecordWriter:
 
         k_split = (len(dataframe) + self.n_records) // self.n_records
         _path = None
+
+        self.failure_examples = {}
 
         if len(dtypes) != len(keys):
             raise ValueError('Failed match, No. of dataframe columns (keys) with dtypes : len(dtypes) ! =  len(keys)')
@@ -294,7 +315,7 @@ class TfRecordWriter:
 
                 for j in tqdm.tqdm_notebook(range(start, end)):
 
-                    example = self._serialize_example(_dataframe.iloc[j].to_dict(),
+                    example = self._serialize_example(j, _dataframe.iloc[j].to_dict(),
                                                       _dtypes, image_key, from_dir, has_ext, func)
 
                     if example is not None:
@@ -302,7 +323,9 @@ class TfRecordWriter:
                         writer.write(example)
 
                     else:
-                        continue
+                        if self.cache_warnings is True:
+                            sys.stdout.write("\r failure_count: " + str(len(self.failure_examples)))
+                            sys.stdout.flush()
 
     def from_directory(self, from_dir: str, query: str = None, image_key: str = 'image'):
         pass
