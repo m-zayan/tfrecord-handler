@@ -15,7 +15,7 @@ __all__ = ['TfRecordWriter', 'TfRecordReader']
 class TfRecordWriter:
 
     def __init__(self, shape: Union[tuple, list], n_records: int,
-                 image_ext: str = '.jpg', failure_ignore: bool = False,
+                 image_ext: str = '.jpg', quality: int = 95, failure_ignore: bool = False,
                  cache_warnings: bool = False):
 
         """
@@ -28,6 +28,9 @@ class TfRecordWriter:
 
         image_ext: str
             default = '.jpg'
+
+        quality: int
+             Quality of the compression from 0 to 100, (higher is better and slower).
 
         failure_ignore: bool
             if True, then Get a warning message in case of
@@ -49,6 +52,7 @@ class TfRecordWriter:
         self.shape = shape
         self.n_records = n_records
         self.image_ext = image_ext
+        self.quality = quality
         self.failure_ignore = failure_ignore
         self.cache_warnings = cache_warnings
         self.failure_examples = None
@@ -189,7 +193,7 @@ class TfRecordWriter:
 
     def image_to_bytes(self, img):
 
-        encoded_img = cv2.imencode(self.image_ext, img, (cv2.IMWRITE_JPEG_QUALITY, 94))[1].tostring()
+        encoded_img = cv2.imencode(self.image_ext, img, (cv2.IMWRITE_JPEG_QUALITY, self.quality))[1].tostring()
 
         return encoded_img
 
@@ -323,7 +327,9 @@ class TfRecordWriter:
                         writer.write(example)
 
                     else:
+
                         if self.cache_warnings is True:
+
                             sys.stdout.write("\r failure_count: " + str(len(self.failure_examples)))
                             sys.stdout.flush()
 
@@ -413,12 +419,18 @@ class TfRecordReader:
             raise ValueError('Value of Type : ' + str(f_dtype)[8:-2] + ', is not supported')
 
     def read_tfrecord(self, example):
+
+        """Parse features a given `example`.
+
+        Returns
+        -------
+        tuple: of features value
         """
-        Parses an image and label from the given `example`.
-        """
+
         features = {}
 
         for key in self.features_dtype:
+
             features[key] = TfRecordReader._get_feature_type(self.features_dtype[key])
 
         # parser
@@ -428,14 +440,19 @@ class TfRecordReader:
         values = [None] * len(features)
 
         for i in range(len(keys)):
+
             values[i] = example[keys[i]]
 
             if self.image_key == keys[i]:
+
                 values[i] = self._decode(example[self.image_key])
 
             if self.func is not None:
+
                 for func_key in self.func.keys():
+
                     if func_key == keys[i]:
+
                         values[i] = self.func[func_key](values[i])
 
         return tuple(values)
